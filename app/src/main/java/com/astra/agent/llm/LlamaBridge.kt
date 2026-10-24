@@ -45,24 +45,34 @@ object LlmEngine {
         if (!file.exists() || file.length() == 0L) return@withContext LoadResult.Missing
         loading = true
         try {
-            // Free current model first to release RAM before loading the new one
-            gate.lock()
-            if (loadedName != null) {
-                try { LlamaBridge.nativeFree() } catch (_: Throwable) {}
-                loadedName = null
+            // Use tryLock with a 30-second timeout to avoid permanently blocking the Load button
+            val acquired = gate.tryLock(30, java.util.concurrent.TimeUnit.SECONDS)
+            if (!acquired) {
+                // Force-stop anything running and try to acquire immediately
+                try { LlamaBridge.nativeStop() } catch (_: Throwable) {}
+                if (!gate.tryLock(5, java.util.concurrent.TimeUnit.SECONDS))
+                    return@withContext LoadResult.Failed
             }
-            // The model file is memory-mapped by the native code, so the Java heap limit says nothing about it.
-            // If loading fails, try again with a smaller context before giving up.
-            var used = 0
-            for (c in ctxLadder(nCtx)) {
-                val ok = try { LlamaBridge.nativeLoad(file.absolutePath, c, threads.coerceIn(1, 8)) } catch (_: Throwable) { false }
-                if (ok) { used = c; break }
-                try { LlamaBridge.nativeFree() } catch (_: Throwable) {}
+            try {
+                // Free current model first to release RAM before loading the new one
+                if (loadedName != null) {
+                    try { LlamaBridge.nativeFree() } catch (_: Throwable) {}
+                    loadedName = null
+                }
+                // The model file is memory-mapped by the native code, so the Java heap limit says nothing about it.
+                // If loading fails, try again with a smaller context before giving up.
+                var used = 0
+                for (c in ctxLadder(nCtx)) {
+                    val ok = try { LlamaBridge.nativeLoad(file.absolutePath, c, threads.coerceIn(1, 8)) } catch (_: Throwable) { false }
+                    if (ok) { used = c; break }
+                    try { LlamaBridge.nativeFree() } catch (_: Throwable) {}
+                }
+                if (used > 0) { loadedName = file.name; LoadResult.Ok(used) } else LoadResult.Failed
+            } finally {
+                if (gate.isHeldByCurrentThread) gate.unlock()
             }
-            if (used > 0) { loadedName = file.name; LoadResult.Ok(used) } else LoadResult.Failed
         } finally {
-            if (gate.isHeldByCurrentThread) gate.unlock()
-            loading = false
+            loading = false   // Always reset — even if gate.unlock was never reached
         }
     }
 

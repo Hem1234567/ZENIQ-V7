@@ -111,7 +111,8 @@ fun ModelsScreen(vm: AstraViewModel) {
                         if (loaded == f.name) {
                             Text("Active", color = c.green, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
                         } else {
-                            PillButton(if (loading) "Loading…" else "Load", enabled = !loading) { vm.loadModel(f) }
+                            val isThisLoading = loading
+                            PillButton(if (isThisLoading) "Loading…" else "Load", enabled = !isThisLoading) { vm.loadModel(f) }
                         }
                         Spacer(Modifier.width(8.dp))
                         Box(Modifier.size(32.dp).clip(CircleShape).background(c.red.copy(alpha = 0.12f))

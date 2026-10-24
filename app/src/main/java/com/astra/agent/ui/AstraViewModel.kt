@@ -177,7 +177,10 @@ class AstraViewModel(private val app: Application) : AndroidViewModel(app) {
 
     init {
         val last = settings.value.lastModel
-        models.installed().firstOrNull { it.name == last }?.let { loadModel(it) }
+        // Sync loadedName immediately so the UI shows "Active" before the async load finishes
+        if (LlmEngine.loadedName != null) loadedModel.value = LlmEngine.loadedName
+        val fileToLoad = models.installed().firstOrNull { it.name == last }
+        if (fileToLoad != null) loadModel(fileToLoad)
         refreshStorage()
         // Init Kokoro engine if model files are already downloaded
         if (kokoro.isDownloaded()) kokoro.initEngine()
@@ -355,6 +358,10 @@ class AstraViewModel(private val app: Application) : AndroidViewModel(app) {
         if (loadingModel.value) {
             add(InfoItem(uid(), "Already loading a model. Wait for it to finish.", true)); return
         }
+        if (LlmEngine.loadedName == f.name) {
+            // Already loaded, just sync the state
+            loadedModel.value = f.name; return
+        }
         if (!f.exists() || f.length() < 1_000_000L) {
             add(InfoItem(uid(), "Model file not found or corrupted: ${f.name}", true)); return
         }
@@ -365,11 +372,13 @@ class AstraViewModel(private val app: Application) : AndroidViewModel(app) {
                 LlmEngine.loadDetailed(f, settings.value.nCtx, settings.value.threads)
             } catch (_: Throwable) {
                 LlmEngine.LoadResult.Failed
+            } finally {
+                // Always clear loading flag no matter what
+                loadingModel.value = false
+                liveStatus.value = ""
             }
             val ok = res is LlmEngine.LoadResult.Ok
             loadedModel.value = if (ok) f.name else if (res is LlmEngine.LoadResult.Busy) loadedModel.value else null
-            loadingModel.value = false
-            liveStatus.value = ""
             if (res is LlmEngine.LoadResult.Busy) return@launch      // another load is already running: nothing to report
             val mi = android.app.ActivityManager.MemoryInfo().also { (app.getSystemService(android.content.Context.ACTIVITY_SERVICE) as android.app.ActivityManager).getMemoryInfo(it) }
             if (res is LlmEngine.LoadResult.Ok) {

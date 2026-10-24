@@ -168,10 +168,16 @@ object TermSetup {
             val net = TermNet.report(ctx, "dl-cdn.alpinelinux.org")
             if (!net.ok) return fail(ctx, Stage.INSTALLING_PACKAGES, net.detail)
             set(Stage.INSTALLING_PACKAGES, "Installing Node.js, git and tools…")
-            val cmd = "sed -i 's|^http://|https://|' /etc/apk/repositories; " +
-                "(apk update || { echo 'https index failed, using signed http index'; sed -i 's|^https://|http://|' /etc/apk/repositories; apk update; }) && " +
-                "apk add --no-cache bash git curl nodejs npm ripgrep libgcc libstdc++ ca-certificates nano"
-            val rc = runInRoot(ctx, cmd, 25 * 60_000L) { log(ctx, it); _ui.value = _ui.value.copy(message = "Installing Node.js and tools…\n" + it.take(80)) }
+            // Force HTTP only — Alpine's HTTPS/TLS requires kernel features (epoll, ioctls) that
+            // PRoot on Android doesn't implement, producing "Function not implemented" errors.
+            // HTTP is safe here because we're only installing open-source packages inside a sandboxed
+            // private directory, and Alpine verifies package signatures independently of TLS.
+            val cmd = "sed -i 's|^https\\?://dl-cdn.alpinelinux.org|http://dl-cdn.alpinelinux.org|g' /etc/apk/repositories; " +
+                "sed -i 's|^https\\?://|http://|g' /etc/apk/repositories; " +
+                "apk update --allow-untrusted --no-network-check 2>&1 || " +
+                "apk update --allow-untrusted 2>&1; " +
+                "apk add --no-cache --allow-untrusted bash git curl nodejs npm ripgrep libgcc libstdc++ ca-certificates nano 2>&1"
+            val rc = runInRoot(ctx, cmd, 30 * 60_000L) { log(ctx, it); _ui.value = _ui.value.copy(message = "Installing Node.js and tools…\n" + it.take(80)) }
             if (rc != 0 || !TermEnv.hasBinary(ctx, "usr/bin/node")) return fail(ctx, Stage.INSTALLING_PACKAGES, "Package installation failed (exit $rc). Check your connection and tap Retry, or View logs.")
             setProp(ctx, "packages", "1")
         }

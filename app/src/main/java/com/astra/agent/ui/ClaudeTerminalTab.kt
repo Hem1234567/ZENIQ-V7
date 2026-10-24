@@ -1,7 +1,11 @@
 package com.astra.agent.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.graphics.Typeface
 import android.view.KeyEvent
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -65,6 +69,12 @@ fun ClaudeTerminalTab(workspace: File?, projectName: String?) {
                 }
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     PillButton(if (showLog) "Hide logs" else "View logs", c.accent) { showLog = !showLog }
+                    PillButton("Copy log", c.accent) {
+                        val logText = TermSetup.readLog(ctx)
+                        val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        cm.setPrimaryClip(ClipData.newPlainText("ZENIQ setup log", logText))
+                        Toast.makeText(ctx, "Log copied to clipboard", Toast.LENGTH_SHORT).show()
+                    }
                     PillButton("Check connection", c.accent) { scope.launch { net = TermNet.report(ctx, "api.anthropic.com") } }
                 }
                 if (showLog) Text(TermSetup.readLog(ctx), color = c.text, fontSize = 11.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(c.fill).padding(8.dp))
@@ -77,6 +87,12 @@ fun ClaudeTerminalTab(workspace: File?, projectName: String?) {
                 PillButton("Check connection", c.accent) { scope.launch { net = TermNet.report(ctx, "api.anthropic.com") } }
                 PillButton("Sign out", c.red) { confirm = "signout" }
                 PillButton(if (showLog) "Hide logs" else "Logs", c.sub) { showLog = !showLog }
+                PillButton("Copy log", c.sub) {
+                    val logText = TermSetup.readLog(ctx)
+                    val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    cm.setPrimaryClip(ClipData.newPlainText("ZENIQ setup log", logText))
+                    Toast.makeText(ctx, "Log copied to clipboard", Toast.LENGTH_SHORT).show()
+                }
             }
             if (showLog) Text(TermSetup.readLog(ctx).takeLast(3000), color = c.text, fontSize = 10.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.fillMaxWidth().heightIn(max = 140.dp).verticalScroll(rememberScrollState()).background(c.fill).padding(6.dp))
             val client = remember { TermSessions.client(ctx) }
