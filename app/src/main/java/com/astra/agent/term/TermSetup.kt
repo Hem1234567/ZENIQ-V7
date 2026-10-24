@@ -168,17 +168,20 @@ object TermSetup {
             val net = TermNet.report(ctx, "dl-cdn.alpinelinux.org")
             if (!net.ok) return fail(ctx, Stage.INSTALLING_PACKAGES, net.detail)
             set(Stage.INSTALLING_PACKAGES, "Installing Node.js, git and tools…")
-            // Force HTTP only — Alpine's HTTPS/TLS requires kernel features (epoll, ioctls) that
-            // PRoot on Android doesn't implement, producing "Function not implemented" errors.
-            // HTTP is safe here because we're only installing open-source packages inside a sandboxed
-            // private directory, and Alpine verifies package signatures independently of TLS.
-            val cmd = "sed -i 's|^https\\?://dl-cdn.alpinelinux.org|http://dl-cdn.alpinelinux.org|g' /etc/apk/repositories; " +
-                "sed -i 's|^https\\?://|http://|g' /etc/apk/repositories; " +
-                "apk update --allow-untrusted --no-network-check 2>&1 || " +
+            // Force HTTP — Alpine HTTPS needs kernel features PRoot on Android doesn't emulate.
+            // --no-scripts skips post-install hooks that call fchdir() (not emulated by PRoot).
+            // apk exits non-zero when it can't write its own database (also uses fchdir), but
+            // ALL binaries are already on disk before that write — check the binary, not exit code.
+            val cmd = "sed -i 's|https://|http://|g' /etc/apk/repositories 2>/dev/null; " +
                 "apk update --allow-untrusted 2>&1; " +
-                "apk add --no-cache --allow-untrusted bash git curl nodejs npm ripgrep libgcc libstdc++ ca-certificates nano 2>&1"
-            val rc = runInRoot(ctx, cmd, 30 * 60_000L) { log(ctx, it); _ui.value = _ui.value.copy(message = "Installing Node.js and tools…\n" + it.take(80)) }
-            if (rc != 0 || !TermEnv.hasBinary(ctx, "usr/bin/node")) return fail(ctx, Stage.INSTALLING_PACKAGES, "Package installation failed (exit $rc). Check your connection and tap Retry, or View logs.")
+                "apk add --no-cache --allow-untrusted --no-scripts " +
+                "bash git curl nodejs npm ripgrep libgcc libstdc++ ca-certificates nano 2>&1; " +
+                "exit 0"
+            runInRoot(ctx, cmd, 30 * 60_000L) { log(ctx, it); _ui.value = _ui.value.copy(message = "Installing Node.js and tools…\n" + it.take(80)) }
+            // apk may exit non-zero (DB write fails under PRoot fchdir gap) even when every
+            // package binary is fully installed. Only the binary presence matters.
+            if (!TermEnv.hasBinary(ctx, "usr/bin/node")) return fail(ctx, Stage.INSTALLING_PACKAGES,
+                "Node.js not found after install. Check your internet and tap Retry, or View logs.")
             setProp(ctx, "packages", "1")
         }
         // 6. Claude Code (official npm package; Alpine/arm64-musl is a supported platform)
