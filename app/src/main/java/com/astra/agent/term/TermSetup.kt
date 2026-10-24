@@ -48,7 +48,10 @@ object TermSetup {
     /** Setup keeps running when the user leaves the screen. */
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private const val MIN_FREE = 1_200_000_000L
-    private const val ALPINE_BASE = "https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/aarch64/"
+    private const val ALPINE_BASE = "https://dl-cdn.alpinelinux.org/alpine/v3.18/releases/aarch64/"
+    // Alpine v3.18 ships Node 18 LTS which is compatible with PRoot on Android (requires kernel 4.4+).
+    // Alpine latest-stable ships Node 24 which fails under PRoot with ENOSYS (Function not implemented)
+    // because Node 24 uses kernel features (newer ELF/syscalls) that PRoot cannot emulate.
 
     // ── state file ──────────────────────────────────────────────────────────
     private fun props(ctx: Context) = Properties().also { p -> try { TermEnv.stateFile(ctx).inputStream().use { p.load(it) } } catch (_: Exception) {} }
@@ -167,21 +170,32 @@ object TermSetup {
         if (!flag(ctx, "packages") || !TermEnv.hasBinary(ctx, "usr/bin/node")) {
             val net = TermNet.report(ctx, "dl-cdn.alpinelinux.org")
             if (!net.ok) return fail(ctx, Stage.INSTALLING_PACKAGES, net.detail)
-            set(Stage.INSTALLING_PACKAGES, "Installing Node.js, git and tools…")
+            set(Stage.INSTALLING_PACKAGES, "Installing Node.js 18 LTS, git and tools…")
             // Force HTTP — Alpine HTTPS needs kernel features PRoot on Android doesn't emulate.
             // --no-scripts skips post-install hooks that call fchdir() (not emulated by PRoot).
-            // apk exits non-zero when it can't write its own database (also uses fchdir), but
-            // ALL binaries are already on disk before that write — check the binary, not exit code.
+            // apk exits non-zero when it can't write its own database (also fchdir), but all
+            // binaries are already on disk before that write — check the binary, not exit code.
             val cmd = "sed -i 's|https://|http://|g' /etc/apk/repositories 2>/dev/null; " +
                 "apk update --allow-untrusted 2>&1; " +
                 "apk add --no-cache --allow-untrusted --no-scripts " +
                 "bash git curl nodejs npm ripgrep libgcc libstdc++ ca-certificates nano 2>&1; " +
                 "exit 0"
             runInRoot(ctx, cmd, 30 * 60_000L) { log(ctx, it); _ui.value = _ui.value.copy(message = "Installing Node.js and tools…\n" + it.take(80)) }
-            // apk may exit non-zero (DB write fails under PRoot fchdir gap) even when every
-            // package binary is fully installed. Only the binary presence matters.
             if (!TermEnv.hasBinary(ctx, "usr/bin/node")) return fail(ctx, Stage.INSTALLING_PACKAGES,
                 "Node.js not found after install. Check your internet and tap Retry, or View logs.")
+            // Verify node actually executes — Alpine 3.24's Node 24 exists on disk but cannot run
+            // under PRoot on Android (execve returns ENOSYS for its kernel features).
+            val nodeOut = StringBuilder()
+            runInRoot(ctx, "node --version 2>&1; exit 0", 30_000) { nodeOut.appendLine(it) }
+            val nodeWorks = nodeOut.toString().contains(Regex("v\\d+"))
+            if (!nodeWorks) {
+                log(ctx, "node --version failed: ${nodeOut.toString().trim()}")
+                // Clear rootfs + packages so Retry downloads Alpine 3.18 (Node 18 LTS) from scratch
+                setProp(ctx, "rootfs", null); setProp(ctx, "packages", null)
+                return fail(ctx, Stage.INSTALLING_PACKAGES,
+                    "Node.js cannot run on this phone's Android kernel (the installed version needs newer kernel features). " +
+                    "Tap Retry — it will download a compatible version automatically.")
+            }
             setProp(ctx, "packages", "1")
         }
         // 6. Claude Code (official npm package; Alpine/arm64-musl is a supported platform)
